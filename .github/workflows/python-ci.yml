@@ -1,0 +1,49 @@
+name: Python CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.5"
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked
+      - run: uv run --locked ruff check src tests ../scripts
+      - run: uv run --locked ruff format --check src tests ../scripts
+      - run: uv run --locked mypy
+      - run: uv run --locked pytest
+      - run: uv run --locked python -m unittest discover -s ../scripts -p 'test_*.py'
+      - run: uv build
+      - name: Verify installed wheel and source distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_version="$(uv run --locked python -c 'import tomllib; from pathlib import Path; print(tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"])')"
+          for artifact in dist/*.whl dist/*.tar.gz; do
+            environment="$RUNNER_TEMP/package-$(basename "$artifact")"
+            uv venv "$environment"
+            uv pip install --python "$environment/bin/python" "$artifact"
+            (
+              cd "$RUNNER_TEMP"
+              EXPECTED_VERSION="$expected_version" "$environment/bin/python" -c 'import os; from importlib import metadata, resources; assert metadata.version("devhub-python-sdk") == os.environ["EXPECTED_VERSION"]; assert resources.files("devhub_python_sdk").joinpath("py.typed").is_file()'
+            )
+          done

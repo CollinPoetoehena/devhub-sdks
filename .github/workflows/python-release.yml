@@ -1,0 +1,46 @@
+name: Python release
+
+on:
+  push:
+    tags: ["python/v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/python-ci.yml
+  publish:
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: python-release-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.5"
+          python-version: "3.12"
+      - name: Validate release source and metadata
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git merge-base --is-ancestor HEAD origin/main
+          uv run --no-project --python 3.12 python scripts/check_release.py "$TAG"
+      - run: uv build
+        working-directory: python
+      - name: Publish Python artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" python/dist/*.whl python/dist/*.tar.gz \
+            --verify-tag --title "Python ${TAG#python/}" --generate-notes --latest=false
